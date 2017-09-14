@@ -1,22 +1,34 @@
-# spikely
+# spikely - a perl script for spiking pathogenic alleles into VCF files.
 
-Synopsis:
+## Synopsis:
 
-# Get this usage statement (note this is a function not an option).
+### Get this usage statement (note this is a function not an option).
+
+```
 spikely help
+```
 
-# Get usage statement for a particular function.
+### Get usage statement for a particular function.
+
+```
 spikely spike_cohort --help
+```
 
-# Run cohort spiking mode with parameters defined in a config file.
+### Run cohort spiking mode with parameters defined in a config file.
+
+```
 spikely spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz 
     --sample_vcf case_control.vcf.gz
+```
 
-# Run trio spiking mode with parameters on the command line.
+### Run trio spiking mode with parameters on the command line.
+
+```
 spikely spike_trio --ped family.ped --inheritance recessive --maf_key MAF 
     disease_alleles.vcf.gz
+```
 
-Description:
+## Description:
 
 This script will consume a VCF file of causal variants and produce a
 VCF file with those variants 'spiked' into the genotypes of a set of
@@ -28,7 +40,7 @@ population attributable risk and allele population frequency and
 allows those parameters to be specified in a configuration file.  the
 VCF file of affected cases.
 
-Functions:
+## Functions:
 
 help
 spike_duo
@@ -39,18 +51,24 @@ spike_pedigree
 spike_cohort
 Option h requires an argument
 
-# spikely cohort
+# spikely cohort - spike pathogenic alleles into cohort VCF files for case control analyses
 
-Synopsis:
+## Synopsis:
 
-# Get a template config file for the cohort mode.
+### Get a template config file for the cohort mode.
+
+```
 spikely spike_cohort --config_tmplt
+```
 
-# Run cohort spiking mode with parameters defined in a config file.
+### Run cohort spiking mode with parameters defined in a config file.
+
+```
 spikely  spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz 
     --sample_vcf case_control.vcf.gz
+```
 
-Description:
+## Description:
 
 The spike_cohort function will consume a VCF file of disease variants
 and produce a VCF file with those variants 'spiked' into the genotypes
@@ -60,8 +78,9 @@ as inheritance, penetrance and population attributable risk and allele
 population frequency and allows those parameters to be specified in a
 configuration file.
 
-Options:
+### Options:
 
+```
 --inheritance, -i
 
     recessive - Two causal alleles per affected individual in a given
@@ -117,3 +136,4 @@ Options:
     you can edit the template and used the resulting config file with
     the --config_file option above.
 
+```
