@@ -1,0 +1,464 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+use Getopt::Long;
+use Math::Random::Discrete;
+use YAML qw(LoadFile);
+
+#-----------------------------------------------------------------------------
+#----------------------------------- MAIN ------------------------------------
+#-----------------------------------------------------------------------------
+
+my $usage = "
+
+Synopsis:
+
+# Get this usage statement (note this is a function not an option).
+spikely help
+
+# Get usage statement for a particular function.
+spikely spike_cohort --help
+
+# Run cohort spiking mode with parameters defined in a config file.
+spikely spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
+    --sample_vcf case_control.vcf.gz
+
+# Run trio spiking mode with parameters on the command line.
+spikely spike_trio --ped family.ped --inheritance recessive --maf_key MAF \
+    disease_alleles.vcf.gz
+
+Description:
+
+This script will consume a VCF file of causal variants and produce a
+VCF file with those variants 'spiked' into the genotypes of a set of
+individuals defined by various genetic and population parameters.  The
+script has several modes of operation corresponding to various NGS
+genetic analysis designs (i.e. trio, pedigree, cohort etc.).  It
+understands genetic concepts such as inheritance, penetrance and
+population attributable risk and allele population frequency and
+allows those parameters to be specified in a configuration file.  the
+VCF file of affected cases.
+
+Functions:
+
+help
+spike_duo
+spike_trio
+spike_quartet1
+spike_quartet2
+spike_pedigree
+spike_cohort
+
+";
+
+my $function = shift @ARGV;
+
+if (! $function) {
+    my $cmd_ln = $0 . join(' ', '', @ARGV);
+    die "$usage\n\nFATAL : must_specify_function : $cmd_ln\n";
+}
+
+if ($function eq 'duo') {
+    spike_duo();
+}
+elsif ($function eq 'trio') {
+    spike_trio();
+}
+elsif ($function eq 'quartet1') {
+    spike_quartet1();
+}
+elsif ($function eq 'pedigree') {
+    spike_pedigree();
+}
+elsif ($function eq 'cohort') {
+    spike_cohort();
+}
+else {
+    die "$usage\n\nFATAL : invalid_mode : $function\n";
+}
+
+exit(0);
+
+#-----------------------------------------------------------------------------
+#-------------------------------- SUBROUTINES --------------------------------
+#-----------------------------------------------------------------------------
+
+sub parse_vcf {
+
+    my ($file, $args) = @_;
+    $args ||= {};
+    my $IN;
+
+    if (! defined $file) {
+      die "FATAL : must_provide_vcf_file : No VCF file was provided to parse_vcf.\n";
+    }
+    elsif (! -e $file) {
+      die "FATAL : vcf_file_does_not_exits : $file\n";
+    }
+    elsif (! -r $file) {
+      die "FATAL : vcf_file_is_not_readable : $file\n";
+    }
+
+    if ($file =~ /\.vcf$/) {
+	open ($IN, '<', $file) or
+	    die "FATAL : cant_open_file_for_reading : $file\n";
+    }
+    elsif ($file =~ /\.vcf\.gz$/) {
+	open($IN, '-|', "gunzip -c $file") or
+	    die "FATAL : cant_open_file_for_reading : $file\n";
+    }
+    else {
+	die "FATAL : invalid_file_extension : $file\n";
+    }
+
+    my @meta_data;
+    my $header;
+    my @sample_ids;
+    my @variants;
+
+  LINE:
+    while (my $line = <$IN>) {
+	chomp $line;
+	if ($line =~ /^\#\#/) {
+	    push @meta_data, $line;
+	}
+	elsif ($line =~ /^\#CHROM/) {
+	    $header = $line;
+	    @sample_ids = split /\t/, $line;
+	    splice(@sample_ids, 0, 9);
+	    last LINE if $args->{headers_only};
+	}
+	else {
+	    my ($chrom, $pos, $id, $ref, $alt, $qual, $filter,
+		$info_txt, $format_txt, @gts) = split /\t/, $line;
+	    $format_txt ||= '';
+	    my @info_data = split /;/, $info_txt;
+	    my %info;
+	    for my $key_txt (@info_data) {
+		my ($key, $value) = split /=/, $key_txt;
+		$value = defined $value ? $value : '';
+		my @values = split /,/, $value;
+		push @{$info{$key}}, @values;
+	    }
+	    my @formats = split /:/, $format_txt;
+	    my %record = ('CHROM'	=> $chrom,
+			  'POS'	=> $pos,
+			  'ID'		=> $id,
+			  'REF'	=> $ref,
+			  'ALT'	=> $alt,
+			  'QUAL'	=> $qual,
+			  'FILTER'	=> $filter,
+			  'INFO'	=> $info_txt,
+			  'FORMAT'	=> $format_txt,
+			  'GTS'	=> \@gts,
+			  'info_data'   => \%info,
+			  'format_data' => \@formats,
+		);
+	    push @variants, \%record;
+	}
+    }
+    my %vcf_data = (meta_data  => \@meta_data,
+		    header     => $header,
+		    variants   => \@variants,
+		    sample_ids => \@sample_ids,
+	);
+
+    return \%vcf_data;
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_duo {
+
+    my () = @_;
+
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_trio {
+
+    my () = @_;
+
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_quartet1 {
+
+    my () = @_;
+
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_pedigree {
+
+    my () = @_;
+
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_cohort {
+
+  my $usage = "
+
+Synopsis:
+
+# Get a template config file for the cohort mode.
+spikely spike_cohort --config_tmplt
+
+# Run cohort spiking mode with parameters defined in a config file.
+spikely  spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
+    --sample_vcf case_control.vcf.gz
+
+Description:
+
+The spike_cohort function will consume a VCF file of disease variants
+and produce a VCF file with those variants 'spiked' into the genotypes
+of a set of case & control samples defined by various genetic and
+population parameters.  The script understands genetic concepts such
+as inheritance, penetrance and population attributable risk and allele
+population frequency and allows those parameters to be specified in a
+configuration file.
+
+Options:
+
+--inheritance, -i
+
+    recessive - Two causal alleles per affected individual in a given
+		causal gene.  Causal alleles show recessive mendelian
+		inheritance in families.
+    dominant  - One causal allele per affected individual.  Causal alleles
+		show dominant mendelian inheritance in families.
+    x-linked  - One causal allele on chromosome X per male inherited from mother.
+    additive  - Potentially many causal alleles per affected individual.
+
+--max_rate, -r
+
+    The max MAF for any given variant.
+
+--par, -p
+
+    The max percent of individuals affected with a given gene.
+
+--penetrance, -e
+
+    The max percent of individuals with causal alleles, but labeled in
+    PED file as unaffected.
+
+--heritability, -h
+
+    The max percent of individuals without causal alleles, but labeled
+    in PED file as affected.
+
+--ped_file, -d
+
+    The pedigree file in plink PED format.
+
+--maf_key, -f
+
+    The INFO key in the VCF file that contains the population MAF for
+    each variant.
+
+--gene_key, -g
+
+    The INFO key in the VCF file that contains the gene symbol for
+    each variant.
+
+--config_file, -c
+
+    The filename for a YAML formatted file that contains gene and
+    variant configuration options.
+
+--config_tmplt, -t
+
+    If this option is given, together with the --mode option, the
+    script will print a config file template and exit.  The template
+    will have each of the key/value relavant for the given mode and
+    you can edit the template and used the resulting config file with
+    the --config_file option above.
+
+";
+
+
+  my $opts = {};
+  my $opt_success = GetOptions($opts,
+			       'help|h',
+			       'mode|m=s',
+			       'inheritance|i=s',
+			       'max_rate|r=s',
+			       'par|p=s',
+			       'penetrance|e=s',
+			       'heritability|h=s',
+			       'ped_file|d=s',
+			       'maf_key|f=s',
+			       'gene_key|g=s',
+			       'config_file|c=s',
+			       'config_tmplt|t',
+			       'disease_vcf|x=s',
+			       'sample_vcf|y=s',
+			      );
+
+  die $usage if $opts->{help} || ! $opt_success;
+
+  if ($opts->{config_tmplt}) {
+    print_cohort_config_tmplt($function);
+  }
+
+  # Load config file.
+  my $config = {};
+  $config = LoadFile($opts->{config_file}) if $opts->{config_file};
+
+  # Load and map disease VCF file.
+  my $disease_vcf = parse_vcf($opts->{disease_vcf});
+  my %disease_map;
+  map {$disease_map{$_->{ID}} = $_} @{$disease_vcf->{variants}};
+
+  # Load headers only from sample VCF file.
+  my $sample_hdrs = parse_vcf($opts->{sample_vcf}, {headers_only => 1});
+  my $sample_ids = $sample_hdrs->{sample_ids};
+  my $sample_count = scalar @{$sample_ids};
+
+  # Determine case IDs (may not be all samples);
+  my @case_ids;
+  if (exists $config->{case_ids}) {
+    @case_ids = split /,/, $config->{case_ids};
+  }
+  else {
+    @case_ids = @{$sample_ids};
+  }
+  my $case_count = scalar @case_ids;
+
+  # Set up gene & variant data structures.
+  my %gene_data;
+  my %variant_data;
+  my $gene_par_sum;
+  my $gene_info_key = (exists $config->{gene_id_key} ?
+		       $config->{gene_id_key}        :
+		       'GENEINFO');
+  for my $variant (@{$disease_vcf->{variants}}) {
+    $variant_data{map}{$variant->{ID}} = $variant;
+    my $gene_id = (exists $variant->{info_data}{$gene_info_key} ?
+		   $variant->{info_data}{$gene_info_key}[0]        :
+		   'UNKNOWN_GENE');
+    $gene_data{$gene_id}{variant_count}++;
+    push @{$gene_data{$gene_id}{variants}}, $variant;
+    # Set gene inheritance from config or default to dominant.
+    if (exists $config->{genes}{$gene_id} &&
+	exists $config->{genes} &&
+	exists $config->{genes}{$gene_id}{inheritance}) {
+      $gene_data{$gene_id}{inheritance} = $config->{genes}{$gene_id}{inheritance};
+    }
+    elsif (exists $config->{inheritance}) {
+      $gene_data{$gene_id}{inheritance} = $config->{inheritance};
+    }
+    else {
+      $gene_data{$gene_id}{inheritance} = 'dominant';
+    }
+
+    # Set gene PAR from config or default to 1.
+    if (exists $config->{genes}{$gene_id}{par}) {
+      $gene_data{$gene_id}{par} = $config->{genes}{$gene_id}{par};
+    }
+    elsif (exists $config->{par}) {
+      $gene_data{$gene_id}{par} = $config->{par};
+    }
+    else {
+      $gene_data{$gene_id}{par} = 1;
+    }
+    my $gene_par_sum += $gene_data{$gene_id}{par};
+
+    print '';
+  }
+
+  # Set up case data
+  my $idx;
+  my %case_data;
+  my %spike_map;
+ CASE:
+  for my $case_id (@case_ids) {
+    $case_data{$case_id}{idx} = $idx++;
+    # Set heritability from config or default to 1.
+    if (exists $config->{samples} &&
+	exists $config->{samples}{$case_id} &&
+	exists $config->{samples}{$case_id}{heritability}
+       ) {
+      $case_data{$case_id}{heritability} = $config->{samples}{$case_id}{heritability};
+    }
+    elsif (exists $config->{heritability}) {
+      $case_data{$case_id}{heritability} = $config->{heritability};
+    }
+    else {
+      $case_data{$case_id}{heritability} = 1 unless
+	defined $case_data{$case_id}{heritability};
+    }
+
+    # Determine if sample will have a spiked genotype
+    my $heritability_rnd = rand();
+    if ($heritability_rnd > $case_data{$case_id}{heritability}) {
+      warn "INFO : heritability_skipping_sample : $case_id, $heritability_rnd, " . $case_data{$case_id}{heritability} . "\n";
+      next CASE;
+    }
+
+    my (@genes, @pars);
+    map {push @genes, $_; push @pars, $gene_data{$_}{par}}
+      keys %gene_data;
+
+    # Determine which gene a sample will be spiked with.
+    my $spike_gene_id = Math::Random::Discrete->new(\@pars, \@genes)->rand;
+    my $spike_gene = $gene_data{$spike_gene_id};
+
+    my $spike_inheritance = $spike_gene->{inheritance};
+
+    my (@variants, @mafs);
+    for my $variant (@{$spike_gene->{variants}}) {
+      push @variants, $variant;
+      my $maf = (exists $variant->{info_data}{$config->{maf_key}} ?
+		 $variant->{info_data}{$config->{maf_key}}        :
+		 $spike_inheritance eq 'recessive'                ?
+		 0.01                                             :
+		 0.0001);
+      push @mafs, $maf;
+    }
+
+    my $allele_count = $spike_inheritance eq 'dominant' ? 1 : 2;
+    for my $count (1 .. $allele_count) {
+      my $variant = Math::Random::Discrete->new(\@mafs, \@variants)->rand;
+      my $variant_id = $variant->{ID};
+      print '';
+      $spike_map{$variant_id}{$case_id}++;
+    }
+    # $case_data{$case_id}{gene_id} = $spike_gene_id;
+
+    print '';
+  }
+
+  print join "\n", @{$disease_vcf->{meta_data}};
+  print "\n";
+  print join "\t", $disease_vcf->{header}, 'FORMAT', @{$sample_ids};
+  print "\n";
+  for my $variant (@{$disease_vcf->{variants}}) {
+    my $variant_id = $variant->{ID};
+    next unless exists $spike_map{$variant_id};
+    print join "\t", @{$variant}{qw(CHROM POS ID REF ALT QUAL FILTER INFO)};
+    print "\tGT";
+    for my $sample_id (@{$sample_ids}) {
+      my $gt = (exists $spike_map{$variant_id}{$sample_id} ?
+		$spike_map{$variant_id}{$sample_id}        :
+		0);
+      $gt = ($gt == 2 ? '1/1' :
+	     $gt == 1 ? '0/1' :
+	     '0/0');
+      print "\t$gt";
+    }
+    print "\n";
+    print '';
+  }
+  print '';
+
+}
+
+#-----------------------------------------------------------------------------
