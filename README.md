@@ -1,3 +1,5 @@
+![spikely](https://github.com/Yandell-Lab/spikely/blob/master/img/Spikely.png "spikely - spike pathogenic alleles into VCF files")
+
 # spikely - spike pathogenic alleles into VCF files.
 
 ## Synopsis:
