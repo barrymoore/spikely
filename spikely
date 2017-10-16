@@ -171,7 +171,7 @@ sub parse_vcf {
 
 sub spike_duo {
 
-    my () = @_;
+    my ($x) = @_;
 
 }
 
@@ -179,7 +179,7 @@ sub spike_duo {
 
 sub spike_trio {
 
-    my () = @_;
+    my ($x) = @_;
 
 }
 
@@ -187,7 +187,7 @@ sub spike_trio {
 
 sub spike_quartet1 {
 
-    my () = @_;
+    my ($x) = @_;
 
 }
 
@@ -195,7 +195,7 @@ sub spike_quartet1 {
 
 sub spike_pedigree {
 
-    my () = @_;
+    my ($x) = @_;
 
 }
 
