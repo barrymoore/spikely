@@ -46,12 +46,14 @@ is implimented.
 Functions:
 
 help
+cohort
+
+# The following functions are not yet implimented.
 duo
 trio
 quartet1
 quartet2
 pedigree
-cohort
 
 ";
 
@@ -83,7 +85,7 @@ elsif ($function eq 'cohort') {
 else {
     warn "$usage\n\n";
     send_message('FATAL',
-		 'invalid_mode',
+		 'invalid_function',
 		 $function);
 }
 
@@ -334,7 +336,16 @@ Options:
 			       'sample_vcf|y=s',
 			      );
 
-  die $usage if $opts->{help} || ! $opt_success;
+  if ($opts->{help}) {
+      print $usage;
+      exit(0);
+  }
+
+  if(! $opt_success) {
+      warn $usage;
+      send_message('FATAL', 'option_parsing_error',
+		   'Look for error message above usage statement');
+  }
 
   # Load config file.
   my $config = {};
