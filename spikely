@@ -5,6 +5,7 @@ use warnings;
 use Getopt::Long;
 use Math::Random::Discrete;
 use YAML qw(LoadFile);
+use Carp;
 
 #-----------------------------------------------------------------------------
 #----------------------------------- MAIN ------------------------------------
@@ -18,14 +19,15 @@ Synopsis:
 spikely help
 
 # Get usage statement for a particular function.
-spikely spike_cohort --help
+spikely cohort --help
 
 # Run cohort spiking mode with parameters defined in a config file.
-spikely spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
+spikely cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
     --sample_vcf case_control.vcf.gz
 
 # Run trio spiking mode with parameters on the command line.
-spikely spike_trio --ped family.ped --inheritance recessive --maf_key MAF \
+# NOTE: trio spiking not yet implimented.
+spikely trio --ped family.ped --inheritance recessive --maf_key MAF \
     disease_alleles.vcf.gz
 
 Description:
@@ -38,17 +40,18 @@ genetic analysis designs (i.e. trio, pedigree, cohort etc.).  It
 understands genetic concepts such as inheritance, penetrance and
 population attributable risk and allele population frequency and
 allows those parameters to be specified in a configuration file.  the
-VCF file of affected cases.
+VCF file of affected cases.  Note that currently only cohort spiking
+is implimented.
 
 Functions:
 
 help
-spike_duo
-spike_trio
-spike_quartet1
-spike_quartet2
-spike_pedigree
-spike_cohort
+duo
+trio
+quartet1
+quartet2
+pedigree
+cohort
 
 ";
 
@@ -56,7 +59,10 @@ my $function = shift @ARGV;
 
 if (! $function) {
     my $cmd_ln = $0 . join(' ', '', @ARGV);
-    die "$usage\n\nFATAL : must_specify_function : $cmd_ln\n";
+    warn "$usage\n\n";
+    send_message('FATAL',
+		 'must_specify_function',
+		 $cmd_ln);
 }
 
 if ($function eq 'duo') {
@@ -75,7 +81,10 @@ elsif ($function eq 'cohort') {
     spike_cohort();
 }
 else {
-    die "$usage\n\nFATAL : invalid_mode : $function\n";
+    warn "$usage\n\n";
+    send_message('FATAL',
+		 'invalid_mode',
+		 $function);
 }
 
 exit(0);
@@ -91,25 +100,37 @@ sub parse_vcf {
     my $IN;
 
     if (! defined $file) {
-      die "FATAL : must_provide_vcf_file : No VCF file was provided to parse_vcf.\n";
+      send_message('FATAL',
+		   'must_provide_vcf_file',
+		   'No VCF file was provided to parse_vcf');
     }
     elsif (! -e $file) {
-      die "FATAL : vcf_file_does_not_exits : $file\n";
+      send_message('FATAL',
+		   'vcf_file_does_not_exist',
+		   '$file');
     }
     elsif (! -r $file) {
-      die "FATAL : vcf_file_is_not_readable : $file\n";
+      send_message('FATAL',
+		   'vcf_file_is_not_readable',
+		   $file);
     }
 
     if ($file =~ /\.vcf$/) {
 	open ($IN, '<', $file) or
-	    die "FATAL : cant_open_file_for_reading : $file\n";
+      send_message('FATAL',
+		   'cant_open_file_for_reading',
+		   $file);
     }
     elsif ($file =~ /\.vcf\.gz$/) {
 	open($IN, '-|', "gunzip -c $file") or
-	    die "FATAL : cant_open_file_for_reading : $file\n";
+      send_message('FATAL',
+		   'cant_open_file_for_reading',
+		   $file);
     }
     else {
-	die "FATAL : invalid_file_extension : $file\n";
+      send_message('FATAL',
+		   'invalid_file_extension',
+		   $file);
     }
 
     my @meta_data;
@@ -173,6 +194,10 @@ sub spike_duo {
 
     my ($x) = @_;
 
+    warn $usage;
+    send_message('FATAL',
+		 'function_not_implimented',
+		 'Spiking function duo is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -181,6 +206,10 @@ sub spike_trio {
 
     my ($x) = @_;
 
+    warn $usage;
+    send_message('FATAL',
+		 'function_not_implimented',
+		 'Spiking function duo is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -189,6 +218,10 @@ sub spike_quartet1 {
 
     my ($x) = @_;
 
+    warn $usage;
+    send_message('FATAL',
+		 'function_not_implimented',
+		 'Spiking function duo is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -197,6 +230,10 @@ sub spike_pedigree {
 
     my ($x) = @_;
 
+    warn $usage;
+    send_message('FATAL',
+		 'function_not_implimented',
+		 'Spiking function duo is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -206,9 +243,6 @@ sub spike_cohort {
   my $usage = "
 
 Synopsis:
-
-# Get a template config file for the cohort mode.
-spikely spike_cohort --config_tmplt
 
 # Run cohort spiking mode with parameters defined in a config file.
 spikely  spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
@@ -229,11 +263,11 @@ Options:
 --inheritance, -i
 
     recessive - Two causal alleles per affected individual in a given
-		causal gene.  Causal alleles show recessive mendelian
-		inheritance in families.
-    dominant  - One causal allele per affected individual.  Causal alleles
-		show dominant mendelian inheritance in families.
-    x-linked  - One causal allele on chromosome X per male inherited from mother.
+		causal gene.
+    dominant  - One causal allele per affected individual.
+    x-linked - 	One causal allele on chromosome X genes per male case
+    	       	individual.  Two causative alleles on chromosome X
+    	       	genes per female case individual.
     additive  - Potentially many causal alleles per affected individual.
 
 --max_rate, -r
@@ -251,8 +285,15 @@ Options:
 
 --heritability, -h
 
-    The max percent of individuals without causal alleles, but labeled
-    in PED file as affected.
+    The heritability option takes a value from 0 to 1.  This value
+    determines the probability ( each individual case) that the
+    individual will have disease allele(s) in one of the genes
+    represented in the disease VCF file.  A higher value will give
+    each case individual a higer probability of having a causative
+    allele while a lower value will give each case individual a lower
+    probability of having a causative allele.  This option does not
+    determine which disease gene or allele an individual will recieve,
+    but only if the individual will recieve any spiked disease allele.
 
 --ped_file, -d
 
@@ -263,7 +304,7 @@ Options:
     The INFO key in the VCF file that contains the population MAF for
     each variant.
 
---gene_key, -g
+--gene_id_key, -g
 
     The INFO key in the VCF file that contains the gene symbol for
     each variant.
@@ -272,14 +313,6 @@ Options:
 
     The filename for a YAML formatted file that contains gene and
     variant configuration options.
-
---config_tmplt, -t
-
-    If this option is given, together with the --mode option, the
-    script will print a config file template and exit.  The template
-    will have each of the key/value relavant for the given mode and
-    you can edit the template and used the resulting config file with
-    the --config_file option above.
 
 ";
 
@@ -295,24 +328,20 @@ Options:
 			       'heritability|h=s',
 			       'ped_file|d=s',
 			       'maf_key|f=s',
-			       'gene_key|g=s',
+			       'gene_id_key|g=s',
 			       'config_file|c=s',
-			       'config_tmplt|t',
 			       'disease_vcf|x=s',
 			       'sample_vcf|y=s',
 			      );
 
   die $usage if $opts->{help} || ! $opt_success;
 
-  if ($opts->{config_tmplt}) {
-    print_cohort_config_tmplt($function);
-  }
-
   # Load config file.
   my $config = {};
   $config = LoadFile($opts->{config_file}) if $opts->{config_file};
 
   # Load and map disease VCF file.
+  warn $usage unless defined $opts->{disease_vcf};
   my $disease_vcf = parse_vcf($opts->{disease_vcf});
   my %disease_map;
   map {$disease_map{$_->{ID}} = $_} @{$disease_vcf->{variants}};
@@ -322,7 +351,7 @@ Options:
   my $sample_ids = $sample_hdrs->{sample_ids};
   my $sample_count = scalar @{$sample_ids};
 
-  # Determine case IDs (may not be all samples);
+  # Determine case IDs (might not be all samples);
   my @case_ids;
   if (exists $config->{case_ids}) {
     @case_ids = split /,/, $config->{case_ids};
@@ -336,38 +365,108 @@ Options:
   my %gene_data;
   my %variant_data;
   my $gene_par_sum;
-  my $gene_info_key = (exists $config->{gene_id_key} ?
-		       $config->{gene_id_key}        :
-		       'GENEINFO');
+  my $gene_info_key;
+
+  # Set gene_id from command line opts or...
+  if (exists $opts->{gene_id_key}) {
+    $gene_info_key = $opts->{gene_id_key};
+    send_message('info',
+		 'setting_gene_info_key',
+		  $gene_info_key);
+  }
+  # ...from config
+  elsif (exists $config->{gene_id_key}) {
+    $gene_info_key = $config->{gene_id_key};
+    send_message('info',
+		 'setting_gene_info_key',
+		  $gene_info_key);
+  }
+  # ...default GENEINFO (i.e. ClinVar VCF)
+  else {
+    $gene_info_key = 'GENEINFO';
+    send_message('warn',
+		 'setting_gene_info_key_to_default',
+		  $gene_info_key);
+  }
+
   for my $variant (@{$disease_vcf->{variants}}) {
+    send_message('info',
+		 'processing_variant',
+		 $variant->{ID}
+		);
     $variant_data{map}{$variant->{ID}} = $variant;
-    my $gene_id = (exists $variant->{info_data}{$gene_info_key} ?
-		   $variant->{info_data}{$gene_info_key}[0]        :
-		   'UNKNOWN_GENE');
-    $gene_data{$gene_id}{variant_count}++;
-    push @{$gene_data{$gene_id}{variants}}, $variant;
-    # Set gene inheritance from config or default to dominant.
-    if (exists $config->{genes}{$gene_id} &&
-	exists $config->{genes} &&
-	exists $config->{genes}{$gene_id}{inheritance}) {
-      $gene_data{$gene_id}{inheritance} = $config->{genes}{$gene_id}{inheritance};
-    }
-    elsif (exists $config->{inheritance}) {
-      $gene_data{$gene_id}{inheritance} = $config->{inheritance};
+
+    # Get ID of gene associated with variant or set to default.
+    my $gene_id;
+    if (exists $variant->{info_data}{$gene_info_key}) {
+      $gene_id = $variant->{info_data}{$gene_info_key}[0];
     }
     else {
-      $gene_data{$gene_id}{inheritance} = 'dominant';
+      $gene_id = 'UNKNOWN_GENE';
     }
 
-    # Set gene PAR from config or default to 1.
+    $gene_data{$gene_id}{variant_count}++;
+    push @{$gene_data{$gene_id}{variants}}, $variant;
+
+    # Set gene inheritance from gene specific config or...
+    if (exists $config->{genes}           &&
+	exists $config->{genes}{$gene_id} &&
+	exists $config->{genes}{$gene_id}{inheritance}) {
+      $gene_data{$gene_id}{inheritance} =
+	$config->{genes}{$gene_id}{inheritance};
+      send_message('info',
+		   'setting_gene_inheritance_from_gene_config',
+		   $gene_data{$gene_id}{inheritance});
+    }
+    # ...from command-line opts
+    elsif (exists $opts->{inheritance}) {
+      $gene_data{$gene_id}{inheritance} = $opts->{inheritance};
+      send_message('info',
+		   'setting_gene_inheritance_from_command_line_opts',
+		   $gene_data{$gene_id}{inheritance});
+    }
+    # ...from default config
+    elsif (exists $config->{inheritance}) {
+      $gene_data{$gene_id}{inheritance} = $config->{inheritance};
+      send_message('info',
+		   'setting_gene_inheritance_from_config_default',
+		   $gene_data{$gene_id}{inheritance});
+    }
+    # ...default to dominant
+    else {
+      $gene_data{$gene_id}{inheritance} = 'dominant';
+      send_message('warn',
+		   'setting_gene_inheritance_to_default',
+		   $gene_data{$gene_id}{inheritance});
+    }
+
+    # Set gene PAR from gene config or...
     if (exists $config->{genes}{$gene_id}{par}) {
       $gene_data{$gene_id}{par} = $config->{genes}{$gene_id}{par};
+      send_message('info',
+		   'setting_par_from_gene_config',
+		   $gene_data{$gene_id}{par});
     }
+    # ...from opts
+    elsif (exists $opts->{par}) {
+      $gene_data{$gene_id}{par} = $opts->{par};
+      send_message('info',
+		   'setting_par_from_command_line_opts',
+		   $gene_data{$gene_id}{par});
+    }
+    # ...from default config
     elsif (exists $config->{par}) {
       $gene_data{$gene_id}{par} = $config->{par};
+      send_message('info',
+		   'setting_par_from_config_default',
+		   $gene_data{$gene_id}{par});
     }
+    # ...to default of 1.0
     else {
       $gene_data{$gene_id}{par} = 1;
+      send_message('warn',
+		   'setting_par_to_default',
+		   $gene_data{$gene_id}{par});
     }
     my $gene_par_sum += $gene_data{$gene_id}{par};
 
@@ -378,6 +477,7 @@ Options:
   my $idx;
   my %case_data;
   my %spike_map;
+
  CASE:
   for my $case_id (@case_ids) {
     $case_data{$case_id}{idx} = $idx++;
@@ -387,19 +487,37 @@ Options:
 	exists $config->{samples}{$case_id}{heritability}
        ) {
       $case_data{$case_id}{heritability} = $config->{samples}{$case_id}{heritability};
+      send_message('info',
+		   'setting_case_heritability_from_sample_config',
+		   $case_data{$case_id}{heritability});
+    }
+    elsif (exists $opts->{heritability}) {
+      $case_data{$case_id}{heritability} = $opts->{heritability};
+      send_message('info',
+		   'setting_case_heritability_from_command_line_opts',
+		   $case_data{$case_id}{heritability});
     }
     elsif (exists $config->{heritability}) {
       $case_data{$case_id}{heritability} = $config->{heritability};
+      send_message('info',
+		   'setting_case_heritability_from_default_config',
+		   $case_data{$case_id}{heritability});
     }
     else {
       $case_data{$case_id}{heritability} = 1 unless
 	defined $case_data{$case_id}{heritability};
+      send_message('warn',
+		   'setting_case_heritability_to_default',
+		   $case_data{$case_id}{heritability});
     }
 
     # Determine if sample will have a spiked genotype
     my $heritability_rnd = rand();
     if ($heritability_rnd > $case_data{$case_id}{heritability}) {
-      warn "INFO : heritability_skipping_sample : $case_id, $heritability_rnd, " . $case_data{$case_id}{heritability} . "\n";
+      send_message('info',
+		   'heritability_skipping_sample',
+		   "$case_id, $heritability_rnd, " .
+		   $case_data{$case_id}{heritability});
       next CASE;
     }
 
@@ -459,6 +577,48 @@ Options:
   }
   print '';
 
+}
+
+#-----------------------------------------------------------------------------
+
+sub send_message {
+
+  my ($level, $code, $message) = @_;
+
+  if (! $level) {
+    $level = 'FATAL_DEV';
+    $code = 'missing_message_level';
+    $message = ('Called send_message without specifying a level.  ' . 
+		'Please report on https://github.com/Yandell-Lab/spikely/issues');
+
+  }
+
+  if (! $code) {
+    $level = 'FATAL_DEV';
+    $code = 'missing_message_code';
+    $message = ('Called send_message without specifying a code.  ' .
+		'Elevating error to FATAL.' .
+		'Please report on https://github.com/Yandell-Lab/spikely/issues');
+  }
+
+  $message ||= 'No specific error message';
+  chomp $message;
+  $message .= "\n";
+
+  $level = uc $level;
+
+  if ($level eq 'INFO' || $level eq 'WARN') {
+    carp join( ' : ', $level, $code, $message);
+  }
+  elsif ($level eq 'FATAL') {
+    croak join( ' : ', $level, $code, $message);
+  }
+  elsif ($level eq 'FATAL_DEV') {
+    confess join( ' : ', $level, $code, $message);
+  }
+  else {
+    confess join( ' : ', 'FATAL_DEV', 'invalid_message_level', $level);
+  }
 }
 
 #-----------------------------------------------------------------------------

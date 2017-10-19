@@ -1,0 +1,88 @@
+#--------------------------------------------------------------------------------
+# Options can be set in config file or on the command line. Run 
+# `spikely cohort --help` for more detail.
+# Order of precedence is:
+# 1) first sample, gene, or variant specific values set in the config are used,
+# 2) next options set on the command line are used to provide global defaults,
+# 3) next general options set in the config file are used to provide global
+#    defaults,
+# 4) lastly hard coded defaults set in code are used.
+#--------------------------------------------------------------------------------
+
+#--------------------------------------------------------------------------------
+# General options and config level defaults.
+#--------------------------------------------------------------------------------
+
+# The heritability option takes a value from 0 to 1.  This value
+# determines the probability ( each individual case) that the
+# individual will have disease allele(s) in one of the genes
+# represented in the disease VCF file.
+
+heritability: 0.5
+
+# One of recessive, dominant, x-linke, additive
+inheritance: dominant
+
+# Maximum MAF for any single variant in the spiked VCF file.
+
+max_rate: 0.005
+
+# Maximum MAF (in population - as determined by the 'maf_key' in
+# disease variants file) for a given variant.  Variant with a higher
+# MAF will not be used for spiking.
+
+max_maf: 0.0001
+
+# Sets the default maximum 'percent attributable risk' for any gene.
+
+par: 0.3
+
+# Key in disease VCF file info field that specifies population allele
+# frequency.
+
+maf_key: AF
+
+# Key in disease VCF file INFO field that specifies name/id of the
+disease gene associated with each variant.
+
+gene_id_key: GENEINFO
+
+# Comma-separated list of sample IDs from samples VCF file to use as
+# cases.  If not specifed assumes all samples in sample VCF file are
+# cases.
+
+case_ids: Case_01,Case_02,Case_03
+
+#--------------------------------------------------------------------------------
+# Sample specific options.  These over ride command line and config defaults.
+#--------------------------------------------------------------------------------
+
+# samples:
+   Case_01:
+     inheritance: recessive
+
+#--------------------------------------------------------------------------------
+# Gene specific options.  These over ride command line and config defaults.
+#--------------------------------------------------------------------------------
+genes:
+  KRIT1:
+    par: 0.59
+  CCM2:
+    par: 0.2
+  PDCD10:
+    par: 0.13
+
+#--------------------------------------------------------------------------------
+# Variant specific options.  These over ride command line and config defaults.
+#--------------------------------------------------------------------------------
+variants:
+  rs1064793348:
+    max_rate: 0.5
+  rs137853140:
+    max_rate: 0.2
+    CHROM: 7
+    POS: 91855839
+    REF: C
+    ALT: T
+    QUAL: 100
+    FILTER: PASS
