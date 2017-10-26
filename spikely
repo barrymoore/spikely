@@ -27,7 +27,7 @@ spikely cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
 
 # Run trio spiking mode with parameters on the command line.
 # NOTE: trio spiking not yet implimented.
-spikely trio --ped family.ped --inheritance recessive --maf_key MAF \
+spikely trio --ped family.ped --inheritance recessive --af_key MAF \
     disease_alleles.vcf.gz
 
 Description:
@@ -59,11 +59,13 @@ pedigree
 
 my $function = shift @ARGV;
 
+my $DEBUG;
+
 if (! $function) {
     my $cmd_ln = $0 . join(' ', '', @ARGV);
     warn "$usage\n\n";
     send_message('FATAL',
-		 'must_specify_function',
+	 'must_specify_function',
 		 $cmd_ln);
 }
 
@@ -140,6 +142,7 @@ sub parse_vcf {
     my @sample_ids;
     my @variants;
 
+    my %idxs;
   LINE:
     while (my $line = <$IN>) {
 	chomp $line;
@@ -155,6 +158,7 @@ sub parse_vcf {
 	else {
 	    my ($chrom, $pos, $id, $ref, $alt, $qual, $filter,
 		$info_txt, $format_txt, @gts) = split /\t/, $line;
+	    my $idx = "${id}_" . ++$idxs{$id};
 	    $format_txt ||= '';
 	    my @info_data = split /;/, $info_txt;
 	    my %info;
@@ -177,6 +181,7 @@ sub parse_vcf {
 			  'GTS'	=> \@gts,
 			  'info_data'   => \%info,
 			  'format_data' => \@formats,
+			  'IDX'         => $idx,
 		);
 	    push @variants, \%record;
 	}
@@ -301,7 +306,7 @@ Options:
 
     The pedigree file in plink PED format.
 
---maf_key, -f
+--af_key, -f
 
     The INFO key in the VCF file that contains the population MAF for
     each variant.
@@ -329,7 +334,7 @@ Options:
 			       'penetrance|e=s',
 			       'heritability|h=s',
 			       'ped_file|d=s',
-			       'maf_key|f=s',
+			       'af_key|f=s',
 			       'gene_id_key|g=s',
 			       'config_file|c=s',
 			       'disease_vcf|x=s',
@@ -349,18 +354,31 @@ Options:
 
   # Load config file.
   my $config = {};
-  $config = LoadFile($opts->{config_file}) if $opts->{config_file};
-
+  if ($opts->{config_file}) {
+      $config = LoadFile($opts->{config_file});
+      send_message('INFO', 'loaded_config_file', $opts->{config_file});
+  }
+  
   # Load and map disease VCF file.
-  warn $usage unless defined $opts->{disease_vcf};
-  my $disease_vcf = parse_vcf($opts->{disease_vcf});
+  my $disease_vcf;
+  if (defined $opts->{disease_vcf}) {
+      $disease_vcf = parse_vcf($opts->{disease_vcf});
+      send_message('INFO', 'loaded_disease_allele_vcf_file', $opts->{disease_vcf});
+  }
+  else {
+      warn $usage;
+      send_message('FATAL', 'missing_disease_allele_vcf_file', '');
+  }
+      
   my %disease_map;
-  map {$disease_map{$_->{ID}} = $_} @{$disease_vcf->{variants}};
+  map {$disease_map{$_->{IDX}} = $_} @{$disease_vcf->{variants}};
 
   # Load headers only from sample VCF file.
   my $sample_hdrs = parse_vcf($opts->{sample_vcf}, {headers_only => 1});
+  send_message('INFO', 'process_update', "Sample VCF File: $opts->{sample_vcf}");
   my $sample_ids = $sample_hdrs->{sample_ids};
   my $sample_count = scalar @{$sample_ids};
+  send_message('INFO', 'process_update', "Sample count: $sample_count");
 
   # Determine case IDs (might not be all samples);
   my @case_ids;
@@ -371,6 +389,7 @@ Options:
     @case_ids = @{$sample_ids};
   }
   my $case_count = scalar @case_ids;
+  send_message('INFO', 'process_update', "Case count: $case_count");
 
   # Set up gene & variant data structures.
   my %gene_data;
@@ -381,31 +400,35 @@ Options:
   # Set gene_id from command line opts or...
   if (exists $opts->{gene_id_key}) {
     $gene_info_key = $opts->{gene_id_key};
-    send_message('info',
+    send_message('INFO',
 		 'setting_gene_info_key',
 		  $gene_info_key);
   }
   # ...from config
   elsif (exists $config->{gene_id_key}) {
     $gene_info_key = $config->{gene_id_key};
-    send_message('info',
+    send_message('INFO',
 		 'setting_gene_info_key',
 		  $gene_info_key);
   }
   # ...default GENEINFO (i.e. ClinVar VCF)
   else {
     $gene_info_key = 'GENEINFO';
-    send_message('warn',
+    send_message('WARN',
 		 'setting_gene_info_key_to_default',
 		  $gene_info_key);
   }
+  send_message('INFO', 'process_update', "Gene ID key from INFO column: $gene_info_key");
 
+  my $total_variant_count;
+  my %genes_data;
   for my $variant (@{$disease_vcf->{variants}}) {
-    send_message('info',
+    $total_variant_count++;
+    send_message('INFO',
 		 'processing_variant',
-		 $variant->{ID}
+		 $variant->{IDX}
 		);
-    $variant_data{map}{$variant->{ID}} = $variant;
+    $variant_data{map}{$variant->{IDX}} = $variant;
 
     # Get ID of gene associated with variant or set to default.
     my $gene_id;
@@ -416,6 +439,10 @@ Options:
       $gene_id = 'UNKNOWN_GENE';
     }
 
+    send_message('INFO',
+		 'found_gene_in_disease_allele_vcf',
+		 $gene_id) unless exists $gene_data{$gene_id};
+    
     $gene_data{$gene_id}{variant_count}++;
     push @{$gene_data{$gene_id}{variants}}, $variant;
 
@@ -425,65 +452,91 @@ Options:
 	exists $config->{genes}{$gene_id}{inheritance}) {
       $gene_data{$gene_id}{inheritance} =
 	$config->{genes}{$gene_id}{inheritance};
-      send_message('info',
+      send_message('INFO',
 		   'setting_gene_inheritance_from_gene_config',
 		   $gene_data{$gene_id}{inheritance});
     }
     # ...from command-line opts
     elsif (exists $opts->{inheritance}) {
       $gene_data{$gene_id}{inheritance} = $opts->{inheritance};
-      send_message('info',
+      send_message('INFO',
 		   'setting_gene_inheritance_from_command_line_opts',
 		   $gene_data{$gene_id}{inheritance});
     }
     # ...from default config
     elsif (exists $config->{inheritance}) {
       $gene_data{$gene_id}{inheritance} = $config->{inheritance};
-      send_message('info',
+      send_message('INFO',
 		   'setting_gene_inheritance_from_config_default',
 		   $gene_data{$gene_id}{inheritance});
     }
     # ...default to dominant
     else {
       $gene_data{$gene_id}{inheritance} = 'dominant';
-      send_message('warn',
+      send_message('WARN',
 		   'setting_gene_inheritance_to_default',
 		   $gene_data{$gene_id}{inheritance});
     }
 
     # Set gene PAR from gene config or...
-    if (exists $config->{genes}{$gene_id}{par}) {
+    if (exists $config->{genes}           &&
+	exists $config->{genes}{$gene_id} &&
+	exists $config->{genes}{$gene_id}{par}) {
       $gene_data{$gene_id}{par} = $config->{genes}{$gene_id}{par};
-      send_message('info',
+      send_message('INFO',
 		   'setting_par_from_gene_config',
 		   $gene_data{$gene_id}{par});
     }
     # ...from opts
     elsif (exists $opts->{par}) {
       $gene_data{$gene_id}{par} = $opts->{par};
-      send_message('info',
+      send_message('INFO',
 		   'setting_par_from_command_line_opts',
 		   $gene_data{$gene_id}{par});
     }
     # ...from default config
     elsif (exists $config->{par}) {
       $gene_data{$gene_id}{par} = $config->{par};
-      send_message('info',
+      send_message('INFO',
 		   'setting_par_from_config_default',
 		   $gene_data{$gene_id}{par});
     }
     # ...to default of 1.0
     else {
       $gene_data{$gene_id}{par} = 1;
-      send_message('warn',
+      send_message('WARN',
 		   'setting_par_to_default',
 		   $gene_data{$gene_id}{par});
     }
     my $gene_par_sum += $gene_data{$gene_id}{par};
 
-    print '';
+    my $maf;
+    if (exists $variant->{info_data}{$config->{af_key}}) {
+	$maf = $variant->{info_data}{$config->{af_key}}[0];
+	send_message('DEBUG', 'variant_af_set_from_vcf', "$variant->{IDX}: $maf");
+    }
+    elsif (exists $variant->{info_data}{$config->{an_key}}) {
+	$maf = 1 / ($variant->{info_data}{$config->{an_key}} + 1);
+	send_message('DEBUG', 'variant_af_set_from_allele_count', "$variant->{IDX}: $maf");
+    }
+    elsif (exists $config->{default_af}) {
+	$maf = $config->{default_af};
+	send_message('DEBUG', 'variant_af_set_from_config_default', "$variant->{IDX}: $maf");
+    }
+    else {
+	$maf = 0;
+	send_message('DEBUG', 'variant_af_set_from_code_default', "$variant->{IDX}: $maf");
+    }
+    push @{$gene_data{$gene_id}{mafs}}, $maf;
   }
 
+  send_message('INFO', 'total_variant_count_in_disease_allele_vcf',
+	       $total_variant_count);
+  for  my $gene (sort keys %genes_data) {
+  send_message('INFO', 'variant_count_for_gene',
+	       "$gene: $gene_data{$gene}");
+  }
+  
   # Set up case data
   my $idx;
   my %case_data;
@@ -491,6 +544,8 @@ Options:
 
  CASE:
   for my $case_id (@case_ids) {
+    send_message('INFO', 'processing_case_id', $case_id);
+
     $case_data{$case_id}{idx} = $idx++;
     # Set heritability from config or default to 1.
     if (exists $config->{samples} &&
@@ -500,26 +555,26 @@ Options:
       $case_data{$case_id}{heritability} = $config->{samples}{$case_id}{heritability};
       send_message('info',
 		   'setting_case_heritability_from_sample_config',
-		   $case_data{$case_id}{heritability});
+		   "$case_id: $case_data{$case_id}{heritability}");
     }
     elsif (exists $opts->{heritability}) {
       $case_data{$case_id}{heritability} = $opts->{heritability};
       send_message('info',
 		   'setting_case_heritability_from_command_line_opts',
-		   $case_data{$case_id}{heritability});
+		   "$case_id: $case_data{$case_id}{heritability}");
     }
     elsif (exists $config->{heritability}) {
       $case_data{$case_id}{heritability} = $config->{heritability};
       send_message('info',
 		   'setting_case_heritability_from_default_config',
-		   $case_data{$case_id}{heritability});
+		   "$case_id: $case_data{$case_id}{heritability}");
     }
     else {
       $case_data{$case_id}{heritability} = 1 unless
 	defined $case_data{$case_id}{heritability};
       send_message('warn',
 		   'setting_case_heritability_to_default',
-		   $case_data{$case_id}{heritability});
+		   "$case_id: $case_data{$case_id}{heritability}");
     }
 
     # Determine if sample will have a spiked genotype
@@ -532,45 +587,75 @@ Options:
       next CASE;
     }
 
-    my (@genes, @pars);
+    send_message('INFO', 'spiking_case_id', $case_id);
+    
+    my (@genes, @pars, @spike_gene_ids);
+    if (exists $config->{genes}) {
+	@spike_gene_ids = keys %{$config->{genes}};
+    }
+    else {
+	@spike_gene_ids = keys %gene_data;
+    }
     map {push @genes, $_; push @pars, $gene_data{$_}{par}}
-      keys %gene_data;
+      @spike_gene_ids;
 
     # Determine which gene a sample will be spiked with.
     my $spike_gene_id = Math::Random::Discrete->new(\@pars, \@genes)->rand;
     my $spike_gene = $gene_data{$spike_gene_id};
+    send_message('INFO', 'spiking_case_with_gene', "$case_id: $spike_gene_id");
 
     my $spike_inheritance = $spike_gene->{inheritance};
 
-    my (@variants, @mafs);
-    for my $variant (@{$spike_gene->{variants}}) {
-      push @variants, $variant;
-      my $maf = (exists $variant->{info_data}{$config->{maf_key}} ?
-		 $variant->{info_data}{$config->{maf_key}}        :
-		 $spike_inheritance eq 'recessive'                ?
-		 0.01                                             :
-		 0.0001);
-      push @mafs, $maf;
-    }
-
-    my $allele_count = $spike_inheritance eq 'dominant' ? 1 : 2;
+    my $mafs = $gene_data{$spike_gene_id}{mafs};
+    map {$_ = 1- $_} @{$mafs} if $spike_inheritance =~ /de.novo/i;
+    my $allele_count = $spike_inheritance eq 'recessive' ? 2 : 1;
     for my $count (1 .. $allele_count) {
-      my $variant = Math::Random::Discrete->new(\@mafs, \@variants)->rand;
-      my $variant_id = $variant->{ID};
-      print '';
+      # Choose the rarest alleles when in de novo inheritance mode.
+      my $variant = Math::Random::Discrete->new($mafs,
+						$gene_data{$spike_gene_id}{variants})->rand;
+      my $variant_id = $variant->{IDX};
+      send_message('INFO', 'spike_case_with_variant', "$case_id: $variant_id");
       $spike_map{$variant_id}{$case_id}++;
     }
-    # $case_data{$case_id}{gene_id} = $spike_gene_id;
-
     print '';
   }
 
+  my %summary;
+  for my $var_key (keys %spike_map) {
+      my $variant = $spike_map{$var_key};
+      for my $case_key (keys %{$variant}) {
+	  my $allele_count = $variant->{$case_key};
+	  $summary{case_allele_count}{$case_key} += $allele_count;
+	  $summary{var_allele_count}{$var_key} += $allele_count;
+	  $summary{hom_count}++ if $allele_count == 2;
+	  $summary{het_count}++ if $allele_count == 1;
+      }
+  }
+  
+  print '';
+  
+  print STDERR << "END";
+
+Summary:
+
+Homozygous count: $summary{hom_count}
+Heterozygous count: $summary{het_count}
+
+END
+
+
+  # send_message('INFO', 'summarize_spike_map'
+  
+  # Do this better
+  push(@{$disease_vcf->{meta_data}}, '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+      unless grep {/##FORMAT=<ID=GT/} @{$disease_vcf->{meta_data}};
+  
   print join "\n", @{$disease_vcf->{meta_data}};
   print "\n";
   print join "\t", $disease_vcf->{header}, 'FORMAT', @{$sample_ids};
   print "\n";
   for my $variant (@{$disease_vcf->{variants}}) {
-    my $variant_id = $variant->{ID};
+    my $variant_id = $variant->{IDX};
     next unless exists $spike_map{$variant_id};
     print join "\t", @{$variant}{qw(CHROM POS ID REF ALT QUAL FILTER INFO)};
     print "\tGT";
@@ -619,7 +704,10 @@ sub send_message {
   $level = uc $level;
 
   if ($level eq 'INFO' || $level eq 'WARN') {
-    carp join( ' : ', $level, $code, $message);
+    warn join( ' : ', $level, $code, $message);
+  }
+  elsif ($level eq 'DEBUG') {
+    warn join( ' : ', $level, $code, $message) if $DEBUG;
   }
   elsif ($level eq 'FATAL') {
     croak join( ' : ', $level, $code, $message);

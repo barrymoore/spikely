@@ -2,10 +2,12 @@
 # Options can be set in config file or on the command line. Run 
 # `spikely cohort --help` for more detail.
 # Order of precedence is:
-# 1) first sample, gene, or variant specific values set in the config are used,
+# 1) first sample, gene, or variant specific values set in the config are used
+#    and override all options below;
 # 2) next options set on the command line are used to provide global defaults,
+#    and override all options below;
 # 3) next general options set in the config file are used to provide global
-#    defaults,
+#    defaults, and override all options below;
 # 4) lastly hard coded defaults set in code are used.
 #--------------------------------------------------------------------------------
 
@@ -20,7 +22,7 @@
 
 heritability: 0.5
 
-# One of recessive, dominant, x-linke, additive
+# One of recessive, dominant, de_novo, x-linke, additive
 inheritance: dominant
 
 # Maximum MAF for any single variant in the spiked VCF file.
@@ -33,6 +35,29 @@ max_rate: 0.005
 
 max_maf: 0.0001
 
+# Spikely uses information from the INFO column to determine the
+# allele frequency of ALT alleles in diesease VCF file.  Setting
+# af_key (defaults is AF) below determines what INFO tag is used to
+# lookup the allele frequency. Sometimes these allele frequency
+# estimates are missing and spikely will try to calculate the maximum
+# allele frequency that could have been present in a population to
+# have been present in the population but still not have been sampled.
+# For this calculation spikely will use the an_key (default AN) to
+# look up the allele number (number of alleles sampled for a site) and
+# set the AF as 1/(AN+1).  If the allele number is also not available
+# then spikely will use a default allele frequency that is specified
+# in the config file using the default_af tag.  The idea of the value
+# provided to the default_af option is that this would be an estimate
+# of the value calculated from 1/(AN+1).  Finally if no allele
+# frequency can be determined by any of the above methods then a
+# default value of 0 is used for the allele frequency and this variant
+# would be sampled less frequently (or more frequently for de novo)
+# than any other allele.
+
+af_key: AF
+an_key: AN
+default_af: 8.3e-6
+
 # Sets the default maximum 'percent attributable risk' for any gene.
 
 par: 0.3
@@ -40,7 +65,6 @@ par: 0.3
 # Key in disease VCF file info field that specifies population allele
 # frequency.
 
-maf_key: AF
 
 # Key in disease VCF file INFO field that specifies name/id of the
 disease gene associated with each variant.
