@@ -1,5 +1,5 @@
 #--------------------------------------------------------------------------------
-# Options can be set in config file or on the command line. Run 
+# Options can be set in config file or on the command line. Run
 # `spikely cohort --help` for more detail.
 # Order of precedence is:
 # 1) first sample, gene, or variant specific values set in the config are used
@@ -67,7 +67,7 @@ par: 0.3
 
 
 # Key in disease VCF file INFO field that specifies name/id of the
-disease gene associated with each variant.
+# disease gene associated with each variant.
 
 gene_id_key: GENEINFO
 
@@ -82,8 +82,8 @@ case_ids: Case_01,Case_02,Case_03
 #--------------------------------------------------------------------------------
 
 # samples:
-   Case_01:
-     inheritance: recessive
+Case_01:
+    inheritance: recessive
 
 #--------------------------------------------------------------------------------
 # Gene specific options.  These over ride command line and config defaults.
