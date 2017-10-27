@@ -58,13 +58,9 @@ af_key: AF
 an_key: AN
 default_af: 8.3e-6
 
-# Sets the default maximum 'percent attributable risk' for any gene.
+# Sets the default 'population attributable risk percent' for any gene.
 
 par: 0.3
-
-# Key in disease VCF file info field that specifies population allele
-# frequency.
-
 
 # Key in disease VCF file INFO field that specifies name/id of the
 disease gene associated with each variant.
