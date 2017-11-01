@@ -80,6 +80,10 @@ elsif ($function eq 'pedigree') {
 elsif ($function eq 'cohort') {
     spike_cohort();
 }
+elsif ($function eq 'help') {
+    warn $usage;
+    exit(0);
+}
 else {
     warn "$usage\n\n";
     send_message('FATAL',
