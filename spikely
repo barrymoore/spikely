@@ -32,8 +32,8 @@ spikely trio --ped family.ped --inheritance recessive --af_key MAF \
 
 Description:
 
-This script will consume a VCF file of causal variants and produce a
-VCF file with those variants 'spiked' into the genotypes of a set of
+This script takes a VCF file of causal variants and produce a VCF file
+with those variants 'spiked' into the genotypes of a set of
 individuals defined by various genetic and population parameters.  The
 script has several modes of operation corresponding to various NGS
 genetic analysis designs (i.e. trio, pedigree, cohort etc.).  It
@@ -144,6 +144,7 @@ sub parse_vcf {
     my @meta_data;
     my $header;
     my @sample_ids;
+    my %id_idx_map;
     my @variants;
 
     my %idxs;
@@ -157,6 +158,8 @@ sub parse_vcf {
 	    $header = $line;
 	    @sample_ids = split /\t/, $line;
 	    splice(@sample_ids, 0, 9);
+	    my $idx = 0;
+	    map {$id_idx_map{$_} = $idx++} @sample_ids;
 	    last LINE if $args->{headers_only};
 	}
 	else {
@@ -194,9 +197,41 @@ sub parse_vcf {
 		    header     => $header,
 		    variants   => \@variants,
 		    sample_ids => \@sample_ids,
+		    id_idx_map => \%id_idx_map,
 	);
 
     return \%vcf_data;
+}
+
+#-----------------------------------------------------------------------------
+
+sub parse_ped {
+
+  my $file = shift;
+
+  open (my $IN, '<', $file) or
+    send_message('FATAL',
+		 'cant_open_ped_file_for_reading',
+		 $file);
+
+  my %pedigree;
+ LINE:
+  while (my $line = <$IN>) {
+
+    next LINE if $line =~ /^\#/;
+    chomp $line;
+    my ($kindred_id, $sample_id, $paternal_id, $maternal_id, $sex,
+	$affection, $project) = split /\t/, $line;
+
+    $pedigree{$kindred_id}{$sample_id} = {paternal_id	 => $paternal_id,
+					  maternal_id	 => $maternal_id,
+					  sex		 => $sex,
+					  affection	 => $affection,
+					  project        => $project,
+					 };
+
+  }
+  return wantarray ? %pedigree : \%pedigree;
 }
 
 #-----------------------------------------------------------------------------
@@ -215,12 +250,437 @@ sub spike_duo {
 
 sub spike_trio {
 
-    my ($x) = @_;
+  my $usage = "
 
+Synopsis:
+
+# Run trio spiking mode with parameters defined in a config file.
+spikely spike_trio --config_file spikely_trio.yaml --disease_vcf clinvar.vcf.gz \
+    --ped_file family_tio.ped --sample_vcf family_trio.vcf.gz
+
+Description:
+
+The spike_trio function takes a VCF file of disease variants and
+produce a VCF file with those variants 'spiked' into the genotypes of
+a set of trio (unaffected mother and father an affected proband)
+samples.
+
+Options:
+
+--max_rate, -r
+
+    The max MAF for any given variant.
+
+--af_key, -f
+
+    The INFO key in the VCF file that contains the population MAF for
+    each variant.
+
+--gene_id_key, -g
+
+    The INFO key in the VCF file that contains the gene symbol for
+    each variant.
+
+--config_file, -c
+
+    The filename for a YAML formatted file that contains gene and
+    variant configuration options.
+
+--disease_vcf, -x
+
+    VCF file containing diesease causing alleles.
+
+--sample_vcf, -y
+
+    VCF file containing 3 samples - the family trio.
+
+--ped_file, -d
+
+    The pedigree file in plink PED format.
+
+--maternal_id, -m
+
+
+
+--paternal_id, -p
+
+
+
+--proband_id, -o
+
+";
+
+
+  my $opts = {};
+  my $opt_success = GetOptions($opts,
+			       'help|h',
+			       'max_rate|r=s',
+			       'af_key|f=s',
+			       'gene_id_key|g=s',
+			       'config_file|c=s',
+			       'disease_vcf|x=s',
+			       'sample_vcf|y=s',
+			       'ped_file|d=s',
+			       'maternal_id|m=s',
+			       'paternal_id|p=s',
+			       'proband_id|o=s',
+			      );
+
+  if ($opts->{help}) {
+      print $usage;
+      exit(0);
+  }
+
+  if(! $opt_success) {
+      warn $usage;
+      send_message('FATAL', 'option_parsing_error',
+		   'Look for error message above usage statement');
+  }
+
+  # Load config file.
+  my $config = {};
+  if ($opts->{config_file}) {
+      $config = LoadFile($opts->{config_file});
+      send_message('INFO', 'loaded_config_file', $opts->{config_file});
+  }
+
+  # Load and map disease VCF file.
+  my $disease_vcf;
+  if (defined $opts->{disease_vcf}) {
+      $disease_vcf = parse_vcf($opts->{disease_vcf});
+      send_message('INFO', 'loaded_disease_allele_vcf_file', $opts->{disease_vcf});
+  }
+  else {
+      warn $usage;
+      send_message('FATAL', 'missing_disease_allele_vcf_file', '');
+  }
+
+  my %disease_map;
+  map {$disease_map{$_->{IDX}} = $_} @{$disease_vcf->{variants}};
+
+  # Load headers only from sample VCF file.
+  my $smpl_hdrs = parse_vcf($opts->{sample_vcf}, {headers_only => 1});
+  send_message('INFO', 'process_update', "Sample VCF File: $opts->{sample_vcf}");
+  my $sample_ids = $smpl_hdrs->{sample_ids};
+  my $sample_count = scalar @{$sample_ids};
+  send_message('INFO', 'process_update', "Sample count: $sample_count");
+
+  # Load PED details
+  my %trios;
+  if ($opts->{ped_file}) {
+    my $pedigree = parse_ped($opts->{ped_file});
+
+  FAMILY:
+    for my $family_id (keys %{$pedigree}) {
+      my $family = $pedigree->{$family_id};
+    SAMPLE:
+      for my $sample_id (keys %{$family}) {
+	my $sample = $family->{$sample_id};
+	my $maternal_id = $sample->{maternal_id};
+	my $paternal_id = $sample->{paternal_id};
+	if ( $maternal_id != 0 && $paternal_id != 0) {
+	  # Check maternal sample is in PED file
+	  if (! exists $family->{$maternal_id}) {
+	    send_message('WARN', 'missing_maternal_id_in_ped_file',
+			 $maternal_id);
+	  }
+	  # Check maternal sample is in VCF file
+	  if (! grep {$maternal_id eq $_} @{$sample_ids}) {
+	    send_message('WARN', 'missing_mother_in_vcf_file',
+			 $maternal_id);
+	    next FAMILY;
+	  }
+	  # Check maternal sex
+	  my $maternal_sex = $family->{$maternal_id}{sex};
+	  if ($maternal_sex != 2) {
+	    send_message('WARN', 'mother_not_female_in_ped_file',
+			 "$maternal_id, $maternal_sex", );
+	  }
+	  # Check maternal affection
+	  my $maternal_affection = $family->{$maternal_id}{affection};
+	  if ($maternal_affection == 2) {
+	    send_message('WARN', 'mother_affected_in_ped_file',
+			 "$maternal_id, $maternal_affection", );
+	  }
+	  # Check paternal sample is in PED file
+	  if (! exists $family->{$paternal_id}) {
+	    send_message('WARN', 'missing_paternal_id_in_ped_file',
+			 $paternal_id);
+	  }
+	  # Check paternal sample is in VCF file
+	  if (! grep {$paternal_id eq $_} @{$sample_ids}) {
+	    send_message('WARN', 'missing_father_in_vcf_file',
+			 $paternal_id);
+	    next FAMILY;
+	  }
+	  # Check paternal sex
+	  my $paternal_sex = $family->{$paternal_id}{sex};
+	  if ($paternal_sex != 1) {
+	    send_message('WARN', 'mother_not_female_in_ped_file',
+			 "$paternal_id, $paternal_sex", );
+	  }
+	  # Check paternal affection
+	  my $paternal_affection = $family->{$paternal_id}{affection};
+	  if ($paternal_affection == 2) {
+	    send_message('WARN', 'mother_affected_in_ped_file',
+			 "$paternal_id, $paternal_affection", );
+	  }
+	  $trios{$family_id}{mother}{id} = $maternal_id;
+	  $trios{$family_id}{father}{id} = $paternal_id;
+	  $trios{$family_id}{proband}{id} = $sample_id;
+	}
+      }
+    }
+  }
+  elsif ($opts->{maternal_id} && $opts->{paternal_id} && $opts->{proband_id}) {
+    $trios{FAM01}{mother}{id}  = $opts->{maternal_id};
+    $trios{FAM01}{father}{id}  = $opts->{paternal_id};
+    $trios{FAM01}{proband}{id} = $opts->{proband_id};
+  }
+  else {
     warn $usage;
-    send_message('FATAL',
-		 'function_not_implimented',
-		 'Spiking function duo is not implimented yet.');
+    send_message('FATAL', 'must_provide_pedigree_info',
+		 'Use either -e or -m, -p, and -o together');
+  }
+
+  # Set up gene & variant data structures.
+  my %gene_data;
+  my %variant_data;
+  my $gene_par_sum;
+  my $gene_info_key;
+
+  # Set gene_id from command line opts or...
+  if (exists $opts->{gene_id_key}) {
+    $gene_info_key = $opts->{gene_id_key};
+    send_message('INFO',
+		 'setting_gene_info_key',
+		  $gene_info_key);
+  }
+  # ...from config
+  elsif (exists $config->{gene_id_key}) {
+    $gene_info_key = $config->{gene_id_key};
+    send_message('INFO',
+		 'setting_gene_info_key',
+		  $gene_info_key);
+  }
+  # ...default GENEINFO (i.e. ClinVar VCF)
+  else {
+    $gene_info_key = 'GENEINFO';
+    send_message('WARN',
+		 'setting_gene_info_key_to_default',
+		  $gene_info_key);
+  }
+  send_message('INFO', 'process_update', "Gene ID key from INFO column: $gene_info_key");
+
+  my $total_variant_count;
+  my %genes_data;
+  for my $variant (@{$disease_vcf->{variants}}) {
+    $total_variant_count++;
+    send_message('INFO',
+		 'processing_variant',
+		 $variant->{IDX}
+		);
+    $variant_data{map}{$variant->{IDX}} = $variant;
+
+    # Get ID of gene associated with variant or set to default.
+    my $gene_id;
+    if (exists $variant->{info_data}{$gene_info_key}) {
+      $gene_id = $variant->{info_data}{$gene_info_key}[0];
+    }
+    else {
+      $gene_id = 'UNKNOWN_GENE';
+    }
+
+    send_message('INFO',
+		 'found_gene_in_disease_allele_vcf',
+		 $gene_id) unless exists $gene_data{$gene_id};
+
+    $gene_data{$gene_id}{variant_count}++;
+    push @{$gene_data{$gene_id}{variants}}, $variant;
+
+
+    my $maf;
+    # Set variant MAF from VCF
+    if (exists $variant->{info_data}{$config->{af_key}}) {
+	$maf = $variant->{info_data}{$config->{af_key}}[0];
+	send_message('DEBUG', 'variant_af_set_from_vcf', "$variant->{IDX}: $maf");
+    }
+    #...else from variant config
+    elsif (exists $variant->{info_data}{$config->{an_key}}) {
+	$maf = 1 / ($variant->{info_data}{$config->{an_key}} + 1);
+	send_message('DEBUG', 'variant_af_set_from_allele_count', "$variant->{IDX}: $maf");
+    }
+    #...else from config default
+    elsif (exists $config->{default_af}) {
+	$maf = $config->{default_af};
+	send_message('DEBUG', 'variant_af_set_from_config_default', "$variant->{IDX}: $maf");
+    }
+    #...else hard-coded default
+    else {
+	$maf = 0;
+	send_message('DEBUG', 'variant_af_set_from_code_default', "$variant->{IDX}: $maf");
+    }
+    push @{$gene_data{$gene_id}{mafs}}, $maf;
+  }
+
+  send_message('INFO', 'total_variant_count_in_disease_allele_vcf',
+	       $total_variant_count);
+  for  my $gene (sort keys %genes_data) {
+  send_message('INFO', 'variant_count_for_gene',
+	       "$gene: $gene_data{$gene}");
+  }
+
+  # Set up family data
+  my $idx;
+  my %spike_map;
+
+  #--------------------
+  # CONTINUE WORK HERE
+  #--------------------
+  # Parse PED file
+  # Spike mom, dad, proband
+  #
+  #
+  #
+  #--------------------
+
+ FAMILY:
+  for my $family_id (keys %trios) {
+    send_message('INFO', 'processing_family_id', $family_id);
+
+    # Set heritability from config or default to 1.
+    if (exists $config->{samples} &&
+	exists $config->{samples}{$family_id} &&
+	exists $config->{samples}{$family_id}{heritability}
+       ) {
+      $trios{$family_id}{heritability} = $config->{samples}{$family_id}{heritability};
+      send_message('info',
+		   'setting_family_heritability_from_sample_config',
+		   "$family_id: $trios{$family_id}{heritability}");
+    }
+    elsif (exists $opts->{heritability}) {
+      $trios{$family_id}{heritability} = $opts->{heritability};
+      send_message('info',
+		   'setting_family_heritability_from_command_line_opts',
+		   "$family_id: $trios{$family_id}{heritability}");
+    }
+    elsif (exists $config->{heritability}) {
+      $trios{$family_id}{heritability} = $config->{heritability};
+      send_message('info',
+		   'setting_family_heritability_from_default_config',
+		   "$family_id: $trios{$family_id}{heritability}");
+    }
+    else {
+      $trios{$family_id}{heritability} = 1 unless
+	defined $trios{$family_id}{heritability};
+      send_message('warn',
+		   'setting_family_heritability_to_default',
+		   "$family_id: $trios{$family_id}{heritability}");
+    }
+
+    # Determine if sample will have a spiked genotype
+    my $heritability_rnd = rand();
+    if ($heritability_rnd > $trios{$family_id}{heritability}) {
+      send_message('info',
+		   'heritability_skipping_family',
+		   "$family_id, $heritability_rnd, " .
+		   $trios{$family_id}{heritability});
+      next FAMILY;
+    }
+
+    send_message('INFO', 'spiking_family_id', $family_id);
+
+    my (@genes, @pars, @spike_gene_ids);
+    if (exists $config->{genes}) {
+	@spike_gene_ids = keys %{$config->{genes}};
+    }
+    else {
+	@spike_gene_ids = keys %gene_data;
+    }
+    map {push @genes, $_; push @pars, $gene_data{$_}{par}}
+      @spike_gene_ids;
+
+    # Determine which gene a sample will be spiked with.
+    my $spike_gene_id = Math::Random::Discrete->new(\@pars, \@genes)->rand;
+    my $spike_gene = $gene_data{$spike_gene_id};
+    send_message('INFO', 'spiking_family_with_gene', "$family_id: $spike_gene_id");
+
+    my $spike_inheritance = $config->{genes}{$spike_gene_id}{inheritance};
+
+    if ($spike_inheritance ne 'recessive') {
+      send_message('FATAL', 'gene_for_trio_inheritance_must_be_recessive',
+		   $spike_gene->{inheritance});
+    }
+
+    my $mafs = $gene_data{$spike_gene_id}{mafs};
+    # Maternal variant
+    my $mat_variant = Math::Random::Discrete->new($mafs,
+						  $gene_data{$spike_gene_id}{variants})->rand;
+    my $mat_variant_id = $mat_variant->{IDX};
+    send_message('INFO', 'spike_mother_with_variant', "$family_id: $mat_variant_id");
+    $spike_map{$mat_variant_id}{$smpl_hdrs->{id_idx_map}{$trios{$family_id}{mother}{id}}}++;
+    $spike_map{$mat_variant_id}{$smpl_hdrs->{id_idx_map}{$trios{$family_id}{proband}{id}}}++;
+
+    # Paternal variant
+    my $pat_variant = Math::Random::Discrete->new($mafs,
+						  $gene_data{$spike_gene_id}{variants})->rand;
+    my $pat_variant_id = $pat_variant->{IDX};
+    send_message('INFO', 'spike_father_with_variant', "$family_id: $pat_variant_id");
+    $spike_map{$pat_variant_id}{$smpl_hdrs->{id_idx_map}{$trios{$family_id}{father}{id}}}++;
+    $spike_map{$pat_variant_id}{$smpl_hdrs->{id_idx_map}{$trios{$family_id}{proband}{id}}}++;
+    print '';
+  }
+
+  # my %summary;
+  # for my $var_key (keys %spike_map) {
+  #     my $variant = $spike_map{$var_key};
+  #     for my $family_key (keys %{$variant}) {
+  #	  my $allele_count = $variant->{$family_key};
+  #	  $summary{family_allele_count}{$family_key} += $allele_count;
+  #	  $summary{var_allele_count}{$var_key} += $allele_count;
+  #	  $summary{hom_count}++ if $allele_count == 2;
+  #	  $summary{het_count}++ if $allele_count == 1;
+  #     }
+  # }
+  #
+  # print '';
+  #
+  # print STDERR << "END";
+
+  # Summary:
+  #
+  # Homozygous count: $summary{hom_count}
+  # Heterozygous count: $summary{het_count}
+  #
+  # END
+
+  # Do this better
+  push(@{$disease_vcf->{meta_data}}, '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+      unless grep {/##FORMAT=<ID=GT/} @{$disease_vcf->{meta_data}};
+
+  print join "\n", @{$disease_vcf->{meta_data}};
+  print "\n";
+  print join "\t", $disease_vcf->{header}, 'FORMAT', @{$sample_ids};
+  print "\n";
+  for my $variant (@{$disease_vcf->{variants}}) {
+    my $variant_id = $variant->{IDX};
+    next unless exists $spike_map{$variant_id};
+    print join "\t", @{$variant}{qw(CHROM POS ID REF ALT QUAL FILTER INFO)};
+    print "\tGT";
+    for my $sample_id (@{$sample_ids}) {
+      my $sample_idx = $smpl_hdrs->{id_idx_map}{$sample_id};
+      my $gt = (exists $spike_map{$variant_id}{$sample_idx} ?
+		$spike_map{$variant_id}{$sample_idx}        :
+		0);
+      $gt = ($gt == 2 ? '1/1' :
+	     $gt == 1 ? '0/1' :
+	     '0/0');
+      print "\t$gt";
+    }
+    print "\n";
+    print '';
+  }
+  print '';
 }
 
 #-----------------------------------------------------------------------------
@@ -261,9 +721,9 @@ spikely  spike_cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
 
 Description:
 
-The spike_cohort function will consume a VCF file of disease variants
-and produce a VCF file with those variants 'spiked' into the genotypes
-of a set of case & control samples defined by various genetic and
+The spike_cohort function takes a VCF file of disease variants and
+produce a VCF file with those variants 'spiked' into the genotypes of
+a set of case & control samples defined by various genetic and
 population parameters.  The script understands genetic concepts such
 as inheritance, penetrance and population attributable risk and allele
 population frequency and allows those parameters to be specified in a
@@ -276,9 +736,9 @@ Options:
     recessive - Two causal alleles per affected individual in a given
 		causal gene.
     dominant  - One causal allele per affected individual.
-    x-linked - 	One causal allele on chromosome X genes per male case
-    	       	individual.  Two causative alleles on chromosome X
-    	       	genes per female case individual.
+    x-linked -	One causal allele on chromosome X genes per male case
+		individual.  Two causative alleles on chromosome X
+		genes per female case individual.
     additive  - Potentially many causal alleles per affected individual.
 
 --max_rate, -r
@@ -331,7 +791,6 @@ Options:
   my $opts = {};
   my $opt_success = GetOptions($opts,
 			       'help|h',
-			       'mode|m=s',
 			       'inheritance|i=s',
 			       'max_rate|r=s',
 			       'par|p=s',
@@ -362,7 +821,7 @@ Options:
       $config = LoadFile($opts->{config_file});
       send_message('INFO', 'loaded_config_file', $opts->{config_file});
   }
-  
+
   # Load and map disease VCF file.
   my $disease_vcf;
   if (defined $opts->{disease_vcf}) {
@@ -373,14 +832,14 @@ Options:
       warn $usage;
       send_message('FATAL', 'missing_disease_allele_vcf_file', '');
   }
-      
+
   my %disease_map;
   map {$disease_map{$_->{IDX}} = $_} @{$disease_vcf->{variants}};
 
   # Load headers only from sample VCF file.
-  my $sample_hdrs = parse_vcf($opts->{sample_vcf}, {headers_only => 1});
+  my $smpl_hdrs = parse_vcf($opts->{sample_vcf}, {headers_only => 1});
   send_message('INFO', 'process_update', "Sample VCF File: $opts->{sample_vcf}");
-  my $sample_ids = $sample_hdrs->{sample_ids};
+  my $sample_ids = $smpl_hdrs->{sample_ids};
   my $sample_count = scalar @{$sample_ids};
   send_message('INFO', 'process_update', "Sample count: $sample_count");
 
@@ -446,7 +905,7 @@ Options:
     send_message('INFO',
 		 'found_gene_in_disease_allele_vcf',
 		 $gene_id) unless exists $gene_data{$gene_id};
-    
+
     $gene_data{$gene_id}{variant_count}++;
     push @{$gene_data{$gene_id}{variants}}, $variant;
 
@@ -540,7 +999,7 @@ Options:
   send_message('INFO', 'variant_count_for_gene',
 	       "$gene: $gene_data{$gene}");
   }
-  
+
   # Set up case data
   my $idx;
   my %case_data;
@@ -592,7 +1051,7 @@ Options:
     }
 
     send_message('INFO', 'spiking_case_id', $case_id);
-    
+
     my (@genes, @pars, @spike_gene_ids);
     if (exists $config->{genes}) {
 	@spike_gene_ids = keys %{$config->{genes}};
@@ -635,9 +1094,9 @@ Options:
 	  $summary{het_count}++ if $allele_count == 1;
       }
   }
-  
+
   print '';
-  
+
   print STDERR << "END";
 
 Summary:
@@ -649,11 +1108,11 @@ END
 
 
   # send_message('INFO', 'summarize_spike_map'
-  
+
   # Do this better
   push(@{$disease_vcf->{meta_data}}, '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
       unless grep {/##FORMAT=<ID=GT/} @{$disease_vcf->{meta_data}};
-  
+
   print join "\n", @{$disease_vcf->{meta_data}};
   print "\n";
   print join "\t", $disease_vcf->{header}, 'FORMAT', @{$sample_ids};
@@ -688,7 +1147,7 @@ sub send_message {
   if (! $level) {
     $level = 'FATAL_DEV';
     $code = 'missing_message_level';
-    $message = ('Called send_message without specifying a level.  ' . 
+    $message = ('Called send_message without specifying a level.  ' .
 		'Please report on https://github.com/Yandell-Lab/spikely/issues');
 
   }
