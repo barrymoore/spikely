@@ -23,7 +23,7 @@ spikely cohort --config_file spikely.yaml --disease_vcf clinvar.vcf.gz \
     --sample_vcf case_control.vcf.gz
 ```
 
-Run trio spiking mode with parameters on the command line. NOTE: trio spiking not yet implimented.
+Run trio spiking mode with parameters on the command line.
 
 ```
 spikely trio --ped family.ped --inheritance recessive --maf_key MAF \
@@ -40,17 +40,19 @@ genetic analysis designs (i.e. trio, pedigree, cohort etc.).  It
 understands genetic concepts such as inheritance, penetrance and
 population attributable risk and allele population frequency and
 allows those parameters to be specified in a configuration file. Note
-that currently only cohort spiking is implimented.
+that currently only cohort and trio spiking is implimented.
 
 ## Functions:
 
 ```
 help
-duo
+cohort
 trio
+
+# For future developement
+duo
 quartet1
 quartet2
 pedigree
-cohort
 ```
 
