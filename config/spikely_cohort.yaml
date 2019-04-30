@@ -16,9 +16,8 @@
 #--------------------------------------------------------------------------------
 
 # The heritability option takes a value from 0 to 1.  This value
-# determines the probability ( each individual case) that the
-# individual will have disease allele(s) in one of the genes
-# represented in the disease VCF file.
+# determines the probability that a given individual will have disease
+# allele(s) in one of the genes represented in the disease VCF file.
 
 heritability: 0.5
 

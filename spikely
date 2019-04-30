@@ -4,6 +4,7 @@ use warnings;
 
 use Getopt::Long;
 use Math::Random::Discrete;
+use List::Util qw(shuffle);
 use YAML qw(LoadFile);
 use Carp;
 
@@ -47,10 +48,10 @@ Functions:
 
 help
 cohort
+trio
 
 # The following functions are not yet implimented.
 duo
-trio
 quartet1
 quartet2
 pedigree
@@ -60,6 +61,8 @@ pedigree
 my $function = shift @ARGV;
 
 my $DEBUG;
+
+our $COMMAND_LINE = $0 . join ' ', @ARGV;
 
 if (! $function) {
     my $cmd_ln = $0 . join(' ', '', @ARGV);
@@ -77,6 +80,9 @@ elsif ($function eq 'trio') {
 }
 elsif ($function eq 'quartet1') {
     spike_quartet1();
+}
+elsif ($function eq 'quartet2') {
+    spike_quartet2();
 }
 elsif ($function eq 'pedigree') {
     spike_pedigree();
@@ -105,6 +111,11 @@ sub parse_vcf {
 
     my ($file, $args) = @_;
     $args ||= {};
+
+    # Valid args
+    # headers_only: 0/undef=FALSE, Any other value=TRUE
+    # map_info_code: perl code snippet to modify INFO values
+
     my $IN;
 
     if (! defined $file) {
@@ -173,19 +184,36 @@ sub parse_vcf {
 		my ($key, $value) = split /=/, $key_txt;
 		$value = defined $value ? $value : '';
 		my @values = split /,/, $value;
+		if (exists $args->{map_info_key} && $args->{map_info_key} eq $key) {
+		    if (! exists $args->{map_info_code} || ! $args->{map_info_code}) {
+			send_message('ERROR', 'missing_map_info_code');
+		    }
+		    else {
+			for (@values) {
+			    my $error;
+			    {
+				local $@;
+				eval $args->{map_info_code};
+				$error = $@ if $@
+			    }
+			    send_message('FATAL', 'error_in_map_info_code',
+					 $error) if $error;
+			}
+		    }
+		}
 		push @{$info{$key}}, @values;
 	    }
 	    my @formats = split /:/, $format_txt;
 	    my %record = ('CHROM'	=> $chrom,
-			  'POS'	=> $pos,
+			  'POS'	        => $pos,
 			  'ID'		=> $id,
-			  'REF'	=> $ref,
-			  'ALT'	=> $alt,
+			  'REF' 	=> $ref,
+			  'ALT'	        => $alt,
 			  'QUAL'	=> $qual,
 			  'FILTER'	=> $filter,
 			  'INFO'	=> $info_txt,
 			  'FORMAT'	=> $format_txt,
-			  'GTS'	=> \@gts,
+			  'GTS'  	=> \@gts,
 			  'info_data'   => \%info,
 			  'format_data' => \@formats,
 			  'IDX'         => $idx,
@@ -301,12 +329,29 @@ Options:
 --maternal_id, -m
 
 
-
 --paternal_id, -p
 
 
-
 --proband_id, -o
+
+
+--map_info_key
+
+    An INFO key name that will we mapped with perl code snippet given
+    to --map_info_code option.  This option must be given together
+    with --map_info_code.
+
+--map_info_code
+
+    A snippet of perl code that will be used to map in INFO value.
+    The INFO key to operate on is given by --map_info_key and this
+    option must be given together with --map_info_key.  The code
+    provided to this option is passed to an eval.  The current INFO
+    value is available via \$_, so to split map the INFO key GENEINFO
+    such that it's value becomes the all text up to the first colon,
+    you could do:
+
+      --map_info_key GENEINFO --map_info_code '(\$_) = split /,/'
 
 ";
 
@@ -324,6 +369,8 @@ Options:
 			       'maternal_id|m=s',
 			       'paternal_id|p=s',
 			       'proband_id|o=s',
+			       'map_info_key=s',
+			       'map_info_code=s',
 			      );
 
   if ($opts->{help}) {
@@ -347,7 +394,9 @@ Options:
   # Load and map disease VCF file.
   my $disease_vcf;
   if (defined $opts->{disease_vcf}) {
-      $disease_vcf = parse_vcf($opts->{disease_vcf});
+      $disease_vcf = parse_vcf($opts->{disease_vcf},
+			       {map_info_key  => $opts->{map_info_key},
+				map_info_code => $opts->{map_info_code}});
       send_message('INFO', 'loaded_disease_allele_vcf_file', $opts->{disease_vcf});
   }
   else {
@@ -498,16 +547,29 @@ Options:
     $gene_data{$gene_id}{variant_count}++;
     push @{$gene_data{$gene_id}{variants}}, $variant;
 
-
     my $maf;
-    # Set variant MAF from VCF
-    if (exists $variant->{info_data}{$config->{af_key}}) {
+    # Set variant AF from VCF af_key given in commandline opts
+    if (exists $variant->{info_data} &&
+	exists $opts->{af_key} &&
+	exists $variant->{info_data}{$opts->{af_key}}) {
+	$maf = $variant->{info_data}{$opts->{af_key}}[0];
+	send_message('DEBUG', 'variant_af_set_from_vcf', "$variant->{IDX}: $maf");
+    }
+    # Set variant AF from VCF af_key given in config
+    elsif (exists $variant->{info_data} &&
+	   exists $config->{af_key} &&
+	   exists $variant->{info_data}{$config->{af_key}}) {
 	$maf = $variant->{info_data}{$config->{af_key}}[0];
 	send_message('DEBUG', 'variant_af_set_from_vcf', "$variant->{IDX}: $maf");
     }
     #...else from variant config
-    elsif (exists $variant->{info_data}{$config->{an_key}}) {
-	$maf = 1 / ($variant->{info_data}{$config->{an_key}} + 1);
+    elsif (exists $variant->{info_data} && 
+	   exists $config->{ac_key} &&
+	   exists $config->{an_key} &&
+	   exists $variant->{info_data}{$config->{ac_key}} &&
+	   exists $variant->{info_data}{$config->{an_key}}) {
+	$maf = ($variant->{info_data}{$config->{ac_key}} /
+		$variant->{info_data}{$config->{an_key}});
 	send_message('DEBUG', 'variant_af_set_from_allele_count', "$variant->{IDX}: $maf");
     }
     #...else from config default
@@ -525,9 +587,9 @@ Options:
 
   send_message('INFO', 'total_variant_count_in_disease_allele_vcf',
 	       $total_variant_count);
-  for  my $gene (sort keys %genes_data) {
+  for  my $gene (sort keys %gene_data) {
   send_message('INFO', 'variant_count_for_gene',
-	       "$gene: $gene_data{$gene}");
+	       "$gene: $gene_data{$gene}{variant_count}");
   }
 
   # Set up family data
@@ -655,8 +717,10 @@ Options:
   # END
 
   # Do this better
+  push(@{$disease_vcf->{meta_data}}, '##INFO=<ID=SPIKELY,Number=.,Type=Flag,Description="Flag identifying variants added by spikely ">');
   push(@{$disease_vcf->{meta_data}}, '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
       unless grep {/##FORMAT=<ID=GT/} @{$disease_vcf->{meta_data}};
+  push(@{$disease_vcf->{meta_data}}, "##spikelyCommand=$COMMAND_LINE");
 
   print join "\n", @{$disease_vcf->{meta_data}};
   print "\n";
@@ -665,6 +729,8 @@ Options:
   for my $variant (@{$disease_vcf->{variants}}) {
     my $variant_id = $variant->{IDX};
     next unless exists $spike_map{$variant_id};
+    $variant->{INFO} .= ';SPIKELY';
+    print '';
     print join "\t", @{$variant}{qw(CHROM POS ID REF ALT QUAL FILTER INFO)};
     print "\tGT";
     for my $sample_id (@{$sample_ids}) {
@@ -692,7 +758,19 @@ sub spike_quartet1 {
     warn $usage;
     send_message('FATAL',
 		 'function_not_implimented',
-		 'Spiking function duo is not implimented yet.');
+		 'Spiking function quartet1 is not implimented yet.');
+}
+
+#-----------------------------------------------------------------------------
+
+sub spike_quartet2 {
+
+    my ($x) = @_;
+
+    warn $usage;
+    send_message('FATAL',
+		 'function_not_implimented',
+		 'Spiking function quartet2 is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -704,7 +782,7 @@ sub spike_pedigree {
     warn $usage;
     send_message('FATAL',
 		 'function_not_implimented',
-		 'Spiking function duo is not implimented yet.');
+		 'Spiking function pedigree is not implimented yet.');
 }
 
 #-----------------------------------------------------------------------------
@@ -757,7 +835,7 @@ Options:
 --heritability, -h
 
     The heritability option takes a value from 0 to 1.  This value
-    determines the probability ( each individual case) that the
+    determines the probability (for each individual case) that the
     individual will have disease allele(s) in one of the genes
     represented in the disease VCF file.  A higher value will give
     each case individual a higer probability of having a causative
@@ -765,6 +843,10 @@ Options:
     probability of having a causative allele.  This option does not
     determine which disease gene or allele an individual will recieve,
     but only if the individual will recieve any spiked disease allele.
+    If the value begins with an equals sign (e.g. -h '=0.1') then
+    rather than a probabalistic heritability the number of spiked
+    individuals will be equal to the number of cases multiplied by the
+    heritability (rounded to the nearest integer).
 
 --ped_file, -d
 
@@ -971,6 +1053,7 @@ Options:
 		   'setting_par_to_default',
 		   $gene_data{$gene_id}{par});
     }
+
     my $gene_par_sum += $gene_data{$gene_id}{par};
 
     my $maf;
@@ -1000,6 +1083,40 @@ Options:
 	       "$gene: $gene_data{$gene}");
   }
 
+  # Handle Hard Heritibility.  If heritability is set on command
+  # line or in config with a leading equals sign (e.g. -h '=0.1')
+  # then exactly x samples will be spiked where x =
+  # round($case_count * $heritability).  In that case we create a
+  # hash of the IDs of x samples and during spiking loop below we
+  # alwasy spike those samples.
+  my $hard_hrtbly;
+  if (exists $opts->{heritability}) {
+      if ($opts->{heritability} =~ /^=/) {
+	  send_message('info',
+		       'setting_hard_heritability_from_command_line_opts',
+		       "$opts->{heritability}");
+	  $hard_hrtbly = $opts->{heritability};
+	  $hard_hrtbly =~ s/^=//;
+      }
+  }
+  elsif (exists $config->{heritability}) {
+      if ($config->{heritability} =~ /^=/) {
+	  send_message('info',
+		       'setting_hard_heritability_from_config_file',
+		       "$config->{heritability}");
+	  $hard_hrtbly = $config->{heritability};
+	  $hard_hrtbly =~ s/^=//;
+      }
+  }
+  
+  my %spike_case_ids;
+  if ($hard_hrtbly) {
+      my $spike_count = sprintf("%.0f", $case_count * $hard_hrtbly);
+      my @rand_case_ids = shuffle @case_ids;
+      # Crete a hash of case_ids to spike;
+      map {$spike_case_ids{$_}++} splice(@rand_case_ids, 0, $spike_count);
+  }
+  
   # Set up case data
   my $idx;
   my %case_data;
@@ -1011,7 +1128,11 @@ Options:
 
     $case_data{$case_id}{idx} = $idx++;
     # Set heritability from config or default to 1.
-    if (exists $config->{samples} &&
+    if ($hard_hrtbly) {
+	$case_data{$case_id}{heritability} =
+	    ($spike_case_ids{$case_id} == 1) ? 1 : 0;
+    }
+    elsif (exists $config->{samples} &&
 	exists $config->{samples}{$case_id} &&
 	exists $config->{samples}{$case_id}{heritability}
        ) {
@@ -1110,9 +1231,10 @@ END
   # send_message('INFO', 'summarize_spike_map'
 
   # Do this better
+  push(@{$disease_vcf->{meta_data}}, '##INFO=<ID=SPIKELY,Number=.,Type=Flag,Description="Flag identifying variants added by spikely ">');
   push(@{$disease_vcf->{meta_data}}, '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
       unless grep {/##FORMAT=<ID=GT/} @{$disease_vcf->{meta_data}};
-
+  push(@{$disease_vcf->{meta_data}}, "##spikelyCommand=$COMMAND_LINE");
   print join "\n", @{$disease_vcf->{meta_data}};
   print "\n";
   print join "\t", $disease_vcf->{header}, 'FORMAT', @{$sample_ids};
@@ -1120,6 +1242,7 @@ END
   for my $variant (@{$disease_vcf->{variants}}) {
     my $variant_id = $variant->{IDX};
     next unless exists $spike_map{$variant_id};
+    $variant->{INFO} .= ';SPIKELY';
     print join "\t", @{$variant}{qw(CHROM POS ID REF ALT QUAL FILTER INFO)};
     print "\tGT";
     for my $sample_id (@{$sample_ids}) {
